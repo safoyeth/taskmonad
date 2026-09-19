@@ -25,7 +25,7 @@ class TaskContext:
         return self.data.get(key, default)
 
     def set_meta(self, key: str, value: Any) -> TaskContext:
-        """Запись в системные метаданные (не сериализуется в JSON)."""
+        """Запись в системные метаданные (не сериализуется в YAML/JSON)."""
         new_meta = self.meta.copy()
         new_meta[key] = value
         return TaskContext(data=self.data, meta=new_meta)

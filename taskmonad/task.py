@@ -48,6 +48,16 @@ class SchedulePropertyBridge(Generic[T]):
         self._task = task
 
     @property
+    def second(self) -> Task[T]:
+        self._task.schedule_config = Schedule().every(1).seconds()
+        return self._task
+
+    @property
+    def minute(self) -> Task[T]:
+        self._task.schedule_config = Schedule().every(1).minutes()
+        return self._task
+
+    @property
     def hour(self) -> Task[T]:
         self._task.schedule_config = Schedule().hourly()
         return self._task
@@ -57,8 +67,20 @@ class SchedulePropertyBridge(Generic[T]):
         self._task.schedule_config = Schedule().daily()
         return self._task
 
-    def minutes(self, n: int) -> Task[T]:
+    def milliseconds(self, n: Union[int, float]) -> Task[T]:
+        self._task.schedule_config = Schedule().every(n).milliseconds()
+        return self._task
+
+    def seconds(self, n: Union[int, float]) -> Task[T]:
+        self._task.schedule_config = Schedule().every(n).seconds()
+        return self._task
+
+    def minutes(self, n: Union[int, float]) -> Task[T]:
         self._task.schedule_config = Schedule().every(n).minutes()
+        return self._task
+
+    def hours(self, n: Union[int, float]) -> Task[T]:
+        self._task.schedule_config = Schedule().every(n).hours()
         return self._task
 
 
@@ -79,7 +101,6 @@ class Task(Generic[T]):
 
             self._comp = default_unit
         else:
-            # Безопасное исполнение: перехватываем сырые ошибки и упаковываем в Exception
             async def safe_comp(ctx: TaskContext) -> Tuple[TaskContext, Union[T, Exception]]:
                 try:
                     res = await _resolve_val(computation(ctx))
@@ -105,15 +126,12 @@ class Task(Generic[T]):
         target_name = step_name or _extract_name(fn)
 
         async def comp(ctx: TaskContext) -> Tuple[TaskContext, Union[U, Exception]]:
-            # 1. Сначала вычисляем предыдущее действие
             next_ctx, res = await self._comp(ctx)
 
             if isinstance(res, Exception):
                 return next_ctx, res
 
             emit_step = next_ctx.get_meta("emit_step")
-
-            # 2. Логируем старт ТЕКУЩЕГО шага строго перед его исполнением
             if emit_step:
                 emit_step(target_name, "running")
 
@@ -121,7 +139,6 @@ class Task(Generic[T]):
                 next_val = fn(res)
                 next_task = next_val if isinstance(next_val, Task) else Task.of(next_val, name=target_name)
 
-                # Выполняем текущий шаг
                 final_ctx, final_res = await next_task._comp(next_ctx)
 
                 if isinstance(final_res, Exception):
@@ -138,17 +155,16 @@ class Task(Generic[T]):
                     emit_step(target_name, "failure")
                 return next_ctx, e
 
-        new_task: Task[U] = Task(name=target_name, computation=comp)
+        # new_task сохраняет имя пайплайна self.name
+        new_task: Task[U] = Task(name=self.name, computation=comp)
         new_task._inherit(self)
         return new_task
-
-    flat_map = bind
 
     # --- Functor Map ---
     def map(self, fn: Callable[[T], U]) -> Task[U]:
         return self.bind(lambda val: Task.of(fn(val)), step_name=f"Map({_extract_name(fn)})")
 
-    # --- Tap / <* (сохраняет входящий результат, выполняя побочный эффект) ---
+    # --- Tap / <* (побочный эффект с сохранением левого значения) ---
     def tap(self, effect: Union[Task[Any], Callable[..., Any]], step_name: Optional[str] = None) -> Task[T]:
         target_name = step_name or f"Tap({_extract_name(effect)})"
 
@@ -187,23 +203,21 @@ class Task(Generic[T]):
                     emit_step(target_name, "failure")
                 return next_ctx, e
 
-            # Возвращаем исходный результат шага слева
             return next_ctx, res
 
-        new_task: Task[T] = Task(name=target_name, computation=comp)
+        # new_task сохраняет имя пайплайна self.name
+        new_task: Task[T] = Task(name=self.name, computation=comp)
         new_task._inherit(self)
         return new_task
 
     # --- Перегрузка операторов >> и << ---
     def __rshift__(self, target: Union[Task[U], Callable[[T], Union[Task[U], U]]]) -> Task[U]:
-        """Оператор >> (Haskell >>=): передает результат следующему шагу."""
         step_name = _extract_name(target)
         if isinstance(target, Task):
             return self.bind(lambda _: target, step_name=step_name)
         return self.bind(target, step_name=step_name)
 
     def __lshift__(self, effect: Union[Task[Any], Callable[..., Any]]) -> Task[T]:
-        """Оператор << (Haskell <*): выполняет побочный эффект, сохраняя левый результат."""
         step_name = f"Tap({_extract_name(effect)})"
         return self.tap(effect, step_name=step_name)
 
@@ -244,7 +258,6 @@ class Task(Generic[T]):
             for item in tasks_or_factories:
                 tasks.append(item if isinstance(item, Task) else item(ctx))
 
-            # Логируем только внутренние дочерние ветки
             async def safe_exec(t: Task[Any]) -> Tuple[TaskContext, Any]:
                 try:
                     if emit_step:
@@ -305,7 +318,7 @@ class Task(Generic[T]):
         self._error_hooks.append(hook)
         return self
 
-    # --- Исполнитель (Runner) ---
+    # --- Runner ---
     async def run(self, initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]:
         ctx = initial_ctx or TaskContext()
         final_ctx, result = await self._comp(ctx)
@@ -318,6 +331,17 @@ class Task(Generic[T]):
                 await _resolve_val(succ_hook(result, final_ctx))
 
         return final_ctx, result
+
+    # --- Сериализация ---
+    @classmethod
+    def from_yaml(cls, source: Union[str, Any]) -> Task[Any]:
+        from taskmonad.serialization import build_task_from_yaml
+        return build_task_from_yaml(source)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Task[Any]:
+        from taskmonad.serialization import build_task_from_dict
+        return build_task_from_dict(data)
 
     def _inherit(self, source: Task[Any]):
         self._success_hooks = source._success_hooks.copy()
