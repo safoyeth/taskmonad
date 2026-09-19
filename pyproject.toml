@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taskmonad"
+version = "0.1.0"
+description = "A monadic task execution and scheduling framework with Qt bridge support"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+qt = ["PyQt6>=6.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "black",
+    "mypy"
+]
