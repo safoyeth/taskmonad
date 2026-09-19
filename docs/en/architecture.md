@@ -87,8 +87,15 @@ When a computation in the pipeline raises an exception or returns an instance of
 
 1. **Short-Circuiting**: Any subsequent steps chained via `bind` (`>>`), `map`, or `tap` (`<<`) are immediately skipped.
 2. **Safety**: No unhandled exceptions crash the running event loop unexpectedly; errors are encapsulated as computation results `(ctx, exception)`.
-3. **Terminal Error Hooks**: If `.error(hook)` was registered on the pipeline, the hook is triggered with `(exception, final_context)`.
+3. **Terminal Lifecycle Hooks**:
+   - `.error(hook)`: Triggered with `(exception, final_context)` upon error.
+   - `.success(hook)`: Triggered with `(result, final_context)` on successful completion.
+   - `.always(hook)` (or `.finally_(hook)`): **Guaranteed to run always** inside a `finally` block regardless of success or failure.
 4. **GUI Notification**: When running inside `TaskRunnerThread`, the `failed` Qt signal emits the error message to the UI thread.
+
+> [!IMPORTANT]
+> **Architectural Principle: Hooks First, Composition Second!**  
+> In TaskMonad, lifecycle hooks (`.success()`, `.error()`, `.always()`) and scheduling rules must be declared on the root `Task` before pipeline binding (`>>`). The internal `_inherit(self)` method propagates registered hooks downward across the entire computation graph, guaranteeing they are preserved on the final executed node.
 
 ```python
 def failing_step(x):
@@ -98,7 +105,13 @@ def unreachable_step(x):
     print("This will never be called")
     return x * 2
 
-task = Task.of(10) >> failing_step >> unreachable_step
+task = (
+    Task("GuardedPipeline")
+    .error(lambda err, ctx: print(f"Caught error: {err}"))
+    .always(lambda res_or_err, ctx: print("Guaranteed finalization!"))
+    >> failing_step
+    >> unreachable_step
+)
 ctx, result = await task.run()
 
 assert isinstance(result, ValueError)

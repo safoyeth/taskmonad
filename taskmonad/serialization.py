@@ -109,6 +109,14 @@ def build_task_from_dict(data: Dict[str, Any]) -> Task[Any]:
         err_fn = ActionRegistry.get(hooks["on_error"])
         current_task.error(err_fn)
 
+    if "on_finally" in hooks:
+        fin_fn = ActionRegistry.get(hooks["on_finally"])
+        current_task.always(fin_fn)
+
+    if "on_always" in hooks:
+        fin_fn = ActionRegistry.get(hooks["on_always"])
+        current_task.always(fin_fn)
+
     # Гарантируем сохранение имени задачи из манифеста
     current_task.name = task_name
 

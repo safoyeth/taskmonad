@@ -32,6 +32,27 @@ async def _resolve_val(val: Any) -> Any:
     return val
 
 
+async def _invoke_hook(hook: Callable[..., Any], result_or_err: Any, ctx: TaskContext) -> Any:
+    try:
+        sig = inspect.signature(hook)
+        param_count = len(sig.parameters)
+        if param_count == 0:
+            res = hook()
+        elif param_count == 1:
+            res = hook(result_or_err)
+        else:
+            res = hook(result_or_err, ctx)
+    except (ValueError, TypeError):
+        try:
+            res = hook(result_or_err, ctx)
+        except TypeError:
+            try:
+                res = hook(result_or_err)
+            except TypeError:
+                res = hook()
+    return await _resolve_val(res)
+
+
 def _extract_name(target: Any) -> str:
     """Извлекает понятное строковое имя для функции, Task или partial-объекта."""
     if hasattr(target, "name") and target.name:
@@ -92,8 +113,9 @@ class Task(Generic[T]):
     ):
         self.name = name
         self.schedule_config: Optional[Schedule] = None
-        self._success_hooks: List[Callable[[T, TaskContext], Any]] = []
-        self._error_hooks: List[Callable[[Exception, TaskContext], Any]] = []
+        self._success_hooks: List[Callable[..., Any]] = []
+        self._error_hooks: List[Callable[..., Any]] = []
+        self._finally_hooks: List[Callable[..., Any]] = []
 
         if computation is None:
             async def default_unit(ctx: TaskContext) -> Tuple[TaskContext, Any]:
@@ -311,25 +333,38 @@ class Task(Generic[T]):
         return SchedulePropertyBridge(self)
 
     # --- Терминальные хуки ---
-    def success(self, hook: Callable[[T, TaskContext], Any]) -> Task[T]:
+    def success(self, hook: Callable[..., Any]) -> Task[T]:
         self._success_hooks.append(hook)
         return self
 
-    def error(self, hook: Callable[[Exception, TaskContext], Any]) -> Task[T]:
+    def error(self, hook: Callable[..., Any]) -> Task[T]:
         self._error_hooks.append(hook)
         return self
+
+    def always(self, hook: Callable[..., Any]) -> Task[T]:
+        """Хук, гарантированно выполняющийся всегда (аналог finally)."""
+        self._finally_hooks.append(hook)
+        return self
+
+    def finally_(self, hook: Callable[..., Any]) -> Task[T]:
+        """Алиас для .always(hook)."""
+        return self.always(hook)
 
     # --- Runner ---
     async def run(self, initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]:
         ctx = initial_ctx or TaskContext()
         final_ctx, result = await self._comp(ctx)
 
-        if isinstance(result, Exception):
-            for err_hook in self._error_hooks:
-                await _resolve_val(err_hook(result, final_ctx))
-        else:
-            for succ_hook in self._success_hooks:
-                await _resolve_val(succ_hook(result, final_ctx))
+        try:
+            if isinstance(result, Exception):
+                for err_hook in self._error_hooks:
+                    await _invoke_hook(err_hook, result, final_ctx)
+            else:
+                for succ_hook in self._success_hooks:
+                    await _invoke_hook(succ_hook, result, final_ctx)
+        finally:
+            for fin_hook in self._finally_hooks:
+                await _invoke_hook(fin_hook, result, final_ctx)
 
         return final_ctx, result
 
@@ -347,4 +382,5 @@ class Task(Generic[T]):
     def _inherit(self, source: Task[Any]):
         self._success_hooks = source._success_hooks.copy()
         self._error_hooks = source._error_hooks.copy()
+        self._finally_hooks = source._finally_hooks.copy()
         self.schedule_config = source.schedule_config

@@ -36,14 +36,21 @@
   Конкурентное выполнение задач через `asyncio.gather`. Возвращает список результатов и объединяет данные контекстов. При возникновении ошибки срабатывает fail-fast прерывание.
 
 #### Расписание и хуки
+> [!IMPORTANT]
+> **Сначала хуки, затем композиция**: Все терминальные хуки (`.success()`, `.error()`, `.always()`, `.finally_()`) и расписание (`.when()`, `.every`) должны задаваться на корневом `Task` до использования операторов `>>` и `<<`.
+
 - **`when(config_fn: Union[Schedule, Callable[[Schedule], Schedule]]) -> Task[T]`**  
   Привязывает конфигурацию расписания к задаче.
 - **`every -> SchedulePropertyBridge[T]`**  
   Свойство, возвращающее текучий билдер (fluent bridge) для настройки интервальных запусков.
-- **`success(hook: Callable[[T, TaskContext], Any]) -> Task[T]`**  
-  Регистрирует коллбэк, вызываемый при успешном завершении задачи.
-- **`error(hook: Callable[[Exception, TaskContext], Any]) -> Task[T]`**  
-  Регистрирует коллбэк, вызываемый при ошибке выполнения.
+- **`success(hook: Callable[..., Any]) -> Task[T]`**  
+  Регистрирует коллбэк, вызываемый только при успешном завершении задачи без ошибок.
+- **`error(hook: Callable[..., Any]) -> Task[T]`**  
+  Регистрирует коллбэк, вызываемый при ошибке выполнения или short-circuit прерывании.
+- **`always(hook: Callable[..., Any]) -> Task[T]`**  
+  Регистрирует коллбэк, который гарантированно выполняется **всегда** (в блоке `finally`), независимо от успеха или сбоя задачи.
+- **`finally_(hook: Callable[..., Any]) -> Task[T]`**  
+  Алиас для `.always(hook)`. Поддерживает сигнатуры коллбэков: `(result_or_err, ctx)`, `(result_or_err)` или `()`, как синхронные, так и `async def`.
 
 #### Выполнение и десериализация
 - **`async run(initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]`**  

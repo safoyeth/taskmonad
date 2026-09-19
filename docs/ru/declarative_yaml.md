@@ -75,6 +75,7 @@ pipeline:
 hooks:
   on_success: "send_notification"
   on_error: "alert_admin"
+  on_finally: "cleanup_resources"
 ```
 
 ---

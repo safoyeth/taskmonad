@@ -201,18 +201,74 @@ task = Task("ComplexSchedule").when(
 
 ---
 
-## 7. Финальные хуки: `success` и `error`
+## 7. Финальные хуки: `success`, `error` и `always` / `finally_`
 
-Хуки вызываются автоматически при завершении метода `.run()`:
+Хуки жизненного цикла регистрируют функции обратного вызова, исполняемые при завершении пайплайна:
+
+| Метод | Условие вызова | Аргументы коллбэка |
+| :--- | :--- | :--- |
+| `.success(hook)` | Только при успешном выполнении пайплайна без ошибок | `(result, ctx)` или `(result)` или `()` |
+| `.error(hook)` | При возникновении исключения или short-circuit прерывании | `(exception, ctx)` или `(exception)` или `()` |
+| `.always(hook)` *(алиас `.finally_(hook)`)* | **Всегда**, независимо от успешности или ошибки | `(result_or_err, ctx)` или `(result_or_err)` или `()` |
+
+Хуки могут быть как синхронными, так и асинхронными (`async def`).
 
 ```python
+async def cleanup_database_connection(res_or_err, ctx):
+    print("Закрытие соединений с БД...")
+
 pipeline = (
     Task("ProductionPipeline")
-    .success(lambda result, ctx: print(f"Успех! Результат: {result}"))
-    .error(lambda err, ctx: print(f"Сбой: {err}"))
+    .success(lambda result, ctx: print(f"✅ Успех! Результат: {result}"))
+    .error(lambda err, ctx: print(f"🚨 Сбой: {err}"))
+    .always(cleanup_database_connection)  # <--- Гарантированно выполнится всегда!
     >> validate_input
     >> execute_pipeline
 )
 
 await pipeline.run()
+```
+
+---
+
+## 8. Архитектурное правило: Сначала хуки, затем композиция!
+
+> [!IMPORTANT]
+> **КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО:**  
+> **Хуки жизненного цикла (`.success()`, `.error()`, `.always()`, `.finally_()`) и конфигурация расписания (`.when()`, `.every`) ДОЛЖНЫ объявляться на корневой задаче ДО монадической композиции операторами `>>` и `<<`!**
+
+### Почему это необходимо?
+
+В TaskMonad пайплайн строится как цепочка вычислений. Каждый оператор связывания (`>>`, `<<`, `map`) создает новый экземпляр `Task` и копирует в него конфигурацию из левого операнда через внутренний метод `_inherit(self)`:
+
+```
+[ Root Task ]  <─── Здесь задаются .success(), .error(), .always(), .when()
+      │
+      ├── (копирует хуки через _inherit)
+      ▼
+   Step 1 (>>)
+      │
+      ├── (копирует хуки через _inherit)
+      ▼
+   Step 2 (>>) ──► Результирующий пайплайн содержит все хуки и выполняет их при run()!
+```
+
+### Примеры: как надо и как не надо
+
+```python
+# ✅ ПРАВИЛЬНО: Сначала хуки на корне, затем связывание
+pipeline = (
+    Task("DataSync")
+    .success(on_success)
+    .error(on_error)
+    .always(cleanup)
+    >> fetch_data
+    >> process_data
+    >> save_data
+)
+
+# ❌ НЕПРАВИЛЬНО: Попытка добавить хуки к корневой задаче ПОСЛЕ связывания
+root = Task("DataSync")
+pipeline = root >> fetch_data >> process_data
+root.always(cleanup)  # ОШИБКА: pipeline уже скопировал пустой список хуков!
 ```

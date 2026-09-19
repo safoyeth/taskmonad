@@ -201,18 +201,74 @@ task = Task("ComplexSchedule").when(
 
 ---
 
-## 7. Terminal Callbacks: `success` and `error`
+## 7. Terminal Callbacks: `success`, `error`, and `always` / `finally_`
 
-Attach terminal hooks that are invoked when `.run()` finishes:
+Terminal lifecycle hooks allow you to register callback functions that are guaranteed to run when the pipeline completes:
+
+| Hook Method | Invocation Condition | Callback Signature |
+| :--- | :--- | :--- |
+| `.success(hook)` | Only when the pipeline succeeds without error | `(result, ctx)` or `(result)` or `()` |
+| `.error(hook)` | When an unhandled error or short-circuit occurs | `(exception, ctx)` or `(exception)` or `()` |
+| `.always(hook)` *(alias `.finally_(hook)`)* | **Always**, regardless of success or failure | `(result_or_err, ctx)` or `(result_or_err)` or `()` |
+
+Hooks support both synchronous functions and asynchronous coroutines (`async def`).
 
 ```python
+async def cleanup_database_connections(res_or_err, ctx):
+    print("Closing pooled database connections...")
+
 pipeline = (
     Task("ProductionPipeline")
-    .success(lambda result, ctx: print(f"Success! Output: {result}"))
-    .error(lambda err, ctx: print(f"Failure alert: {err}"))
+    .success(lambda result, ctx: print(f"✅ Success! Output: {result}"))
+    .error(lambda err, ctx: print(f"🚨 Failure: {err}"))
+    .always(cleanup_database_connections)  # <--- Guaranteed execution always!
     >> validate_input
     >> execute_pipeline
 )
 
 await pipeline.run()
+```
+
+---
+
+## 8. Architectural Rule: Hooks First, Composition Second!
+
+> [!IMPORTANT]
+> **CRITICAL ARCHITECTURAL RULE:**  
+> **Lifecycle hooks (`.success()`, `.error()`, `.always()`, `.finally_()`) and scheduling configurations (`.when()`, `.every`) MUST be declared on the root task BEFORE chaining steps with `>>` and `<<` operators!**
+
+### Why is this required?
+
+In TaskMonad, the pipeline is constructed as an immutable computation chain. Each monadic operator (`>>`, `<<`, `map`) instantiates a new `Task` and copies configuration from the left operand via an internal inheritance mechanism (`_inherit(self)`):
+
+```
+[ Root Task ]  <─── Define .success(), .error(), .always(), .when() HERE
+      │
+      ├── (copies hooks via _inherit)
+      ▼
+   Step 1 (>>)
+      │
+      ├── (copies hooks via _inherit)
+      ▼
+   Step 2 (>>) ──► The final pipeline holds all hooks and executes them on run()!
+```
+
+### Examples: Do's and Don'ts
+
+```python
+# ✅ CORRECT PATTERN: Declare hooks on the root, then bind
+pipeline = (
+    Task("DataSync")
+    .success(on_success)
+    .error(on_error)
+    .always(cleanup)
+    >> fetch_data
+    >> process_data
+    >> save_data
+)
+
+# ❌ INCORRECT PATTERN: Attempting to attach hooks to root AFTER binding
+root = Task("DataSync")
+pipeline = root >> fetch_data >> process_data
+root.always(cleanup)  # ERROR: pipeline already inherited an empty hooks list!
 ```

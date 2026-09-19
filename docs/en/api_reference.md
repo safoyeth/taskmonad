@@ -36,14 +36,21 @@ A monadic container representing an asynchronous computation yielding a value of
   Executes tasks concurrently via `asyncio.gather`. Returns list of results and merges context data. Fail-fast upon any error.
 
 #### Scheduling & Hooks
+> [!IMPORTANT]
+> **Hooks First, Composition Second**: All terminal lifecycle hooks (`.success()`, `.error()`, `.always()`, `.finally_()`) and scheduling rules (`.when()`, `.every`) must be attached to the root `Task` before applying `>>` and `<<` operators.
+
 - **`when(config_fn: Union[Schedule, Callable[[Schedule], Schedule]]) -> Task[T]`**  
   Attaches schedule configuration to the task.
 - **`every -> SchedulePropertyBridge[T]`**  
   Property returning a fluent bridge for configuring interval schedules.
-- **`success(hook: Callable[[T, TaskContext], Any]) -> Task[T]`**  
-  Registers a callback invoked upon successful completion.
-- **`error(hook: Callable[[Exception, TaskContext], Any]) -> Task[T]`**  
-  Registers a callback invoked upon failure.
+- **`success(hook: Callable[..., Any]) -> Task[T]`**  
+  Registers a callback invoked only upon successful completion without error.
+- **`error(hook: Callable[..., Any]) -> Task[T]`**  
+  Registers a callback invoked upon failure or short-circuit error.
+- **`always(hook: Callable[..., Any]) -> Task[T]`**  
+  Registers a callback that is **guaranteed to run always** (in a `finally` block), regardless of pipeline success or failure.
+- **`finally_(hook: Callable[..., Any]) -> Task[T]`**  
+  Alias for `.always(hook)`. Supports callbacks accepting `(result_or_err, ctx)`, `(result_or_err)`, or `()`, both sync and `async def`.
 
 #### Execution & Serialization
 - **`async run(initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]`**  

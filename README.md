@@ -28,6 +28,7 @@ pipeline = (
     .when(lambda do: do.hourly())
     .success(notify_success)
     .error(notify_error)
+    .always(cleanup_resources)      # <--- Guaranteed cleanup hook (always / finally_)
     >> Task.parallel(*download_tasks)
     >> read_all_files
     >> save_report
@@ -149,6 +150,31 @@ task = Task("Complex").when(
 )
 ```
 
+### 6. Terminal Lifecycle Hooks (`success`, `error`, `always` / `finally_`)
+You can register terminal callbacks for pipeline outcomes:
+- `.success(hook)`: Called only when the pipeline finishes without errors.
+- `.error(hook)`: Called if an unhandled exception or short-circuit occurs.
+- `.always(hook)` (alias `.finally_(hook)`): **Guaranteed to execute always**, regardless of whether the pipeline succeeded or failed.
+
+> [!IMPORTANT]
+> **CRITICAL ARCHITECTURAL RULE: Hooks First, Monadic Composition Second!**  
+> In TaskMonad, lifecycle hooks and schedules **must be declared on the root task before chaining steps via `>>` and `<<`**.
+>
+> Each binding operator (`>>`, `<<`, `map`) copies all registered hooks down the pipeline via internal inheritance (`_inherit`). Declaring hooks at the root guarantees that the entire pipeline retains and triggers them upon completion.
+
+```python
+# ✅ CORRECT PATTERN: Hooks declared first!
+pipeline = (
+    Task("MyPipeline")
+    .success(lambda res, ctx: print(f"Done: {res}"))
+    .error(lambda err, ctx: print(f"Failed: {err}"))
+    .always(lambda res_or_err, ctx: print("Cleanup complete."))
+    >> step_1
+    >> step_2
+    >> step_3
+)
+```
+
 ---
 
 ## GUI Integration with PyQt
@@ -217,6 +243,7 @@ pipeline:
 hooks:
   on_success: "notify_success"
   on_error: "notify_error"
+  on_finally: "cleanup_resources"
 ```
 
 Load and run with one line:

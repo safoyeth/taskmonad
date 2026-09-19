@@ -154,6 +154,107 @@ async def test_hooks_success_and_error():
     assert "division by zero" in getattr(pytest, "_err")
 
 
+@pytest.mark.asyncio
+async def test_hooks_always_on_success():
+    always_called = False
+    captured_val = None
+
+    def on_always(val, ctx):
+        nonlocal always_called, captured_val
+        always_called = True
+        captured_val = val
+
+    pipeline = (
+        Task("AlwaysSuccessPipeline")
+        .always(on_always)
+        >> (lambda _: 42)
+        >> (lambda x: x * 2)
+    )
+    ctx, res = await pipeline.run()
+
+    assert res == 84
+    assert always_called is True
+    assert captured_val == 84
+
+
+@pytest.mark.asyncio
+async def test_hooks_always_on_error():
+    always_called = False
+    captured_err = None
+
+    def on_always(val_or_err, ctx):
+        nonlocal always_called, captured_err
+        always_called = True
+        captured_err = val_or_err
+
+    pipeline = (
+        Task("AlwaysErrorPipeline")
+        .always(on_always)
+        >> (lambda _: 10)
+        # pyrefly: ignore [division-by-zero]
+        >> (lambda x: 1 / 0)
+        >> (lambda x: "never")
+    )
+    ctx, res = await pipeline.run()
+
+    assert isinstance(res, ZeroDivisionError)
+    assert always_called is True
+    assert isinstance(captured_err, ZeroDivisionError)
+
+
+@pytest.mark.asyncio
+async def test_hooks_finally_alias_and_zero_arg():
+    finally_called = False
+
+    def cleanup():
+        nonlocal finally_called
+        finally_called = True
+
+    pipeline = (
+        Task("FinallyPipeline")
+        .finally_(cleanup)
+        >> (lambda _: "ok")
+    )
+    await pipeline.run()
+    assert finally_called is True
+
+
+@pytest.mark.asyncio
+async def test_hooks_declared_first_propagate_to_end():
+    events = []
+
+    pipeline = (
+        Task("DeclaredFirst")
+        .success(lambda res, ctx: events.append(f"succ:{res}"))
+        .always(lambda res, ctx: events.append("always"))
+        >> (lambda _: 1)
+        >> (lambda x: x + 1)
+        >> (lambda x: x * 10)
+    )
+    _, res = await pipeline.run()
+
+    assert res == 20
+    assert events == ["succ:20", "always"]
+
+
+@pytest.mark.asyncio
+async def test_hooks_async_always_hook():
+    async_called = False
+
+    async def async_cleanup(res_or_err, ctx):
+        await asyncio.sleep(0.01)
+        nonlocal async_called
+        async_called = True
+
+    pipeline = (
+        Task("AsyncCleanup")
+        .always(async_cleanup)
+        >> (lambda _: "data")
+    )
+    await pipeline.run()
+    assert async_called is True
+
+
 # =====================================================================
 # 4. МОНАДИЧЕСКОЕ ВЕТВЛЕНИЕ (IF / ELSE)
 # =====================================================================
