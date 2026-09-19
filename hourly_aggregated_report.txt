@@ -1,5 +1,0 @@
-Данные из источника https://api.one.org/data
-
-Данные из источника https://api.two.org/data
-
-Данные из источника https://api.three.org/data

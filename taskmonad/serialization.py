@@ -2,7 +2,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 from typing import Any, Callable, Dict, Union
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from taskmonad.task import Task
 from taskmonad.schedule import Schedule
@@ -55,9 +55,9 @@ def _build_step_callable(step_cfg: Dict[str, Any]) -> Callable[[Any], Any]:
     return step_invoker
 
 
-def build_task_from_dict(data: Dict[str, Any]) -> Task:
+def build_task_from_dict(data: Dict[str, Any]) -> Task[Any]:
     task_name = data.get("name", "TaskFromYaml")
-    current_task = Task(name=task_name)
+    current_task: Task[Any] = Task(name=task_name)
 
     if "schedule" in data:
         current_task.schedule_config = Schedule.from_dict(data["schedule"])
@@ -115,7 +115,7 @@ def build_task_from_dict(data: Dict[str, Any]) -> Task:
     return current_task
 
 
-def build_task_from_yaml(source: Union[str, Path]) -> Task:
+def build_task_from_yaml(source: Union[str, Path]) -> Task[Any]:
     raw_text: str
 
     if isinstance(source, Path):

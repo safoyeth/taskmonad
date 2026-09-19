@@ -1,4 +1,9 @@
+from pathlib import Path
 import sys
+
+# Allow direct execution without installing package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, 
     QVBoxLayout, QTextEdit, QLabel, QWidget

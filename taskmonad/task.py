@@ -277,14 +277,14 @@ class Task(Generic[T]):
                 return_exceptions=True,
             )
 
-            collected = []
+            collected: List[Any] = []
             merged_ctx = ctx
 
-            for item in raw_results:
-                if isinstance(item, Exception):
-                    return merged_ctx, item
+            for res_entry in raw_results:
+                if isinstance(res_entry, BaseException):
+                    return merged_ctx, res_entry if isinstance(res_entry, Exception) else Exception(str(res_entry))
 
-                sub_ctx, val = item
+                sub_ctx, val = res_entry
                 if isinstance(val, Exception):
                     return merged_ctx, val
 
@@ -293,7 +293,8 @@ class Task(Generic[T]):
 
             return merged_ctx, collected
 
-        return cls(name=group_name, computation=comp)
+        parallel_task: Task[List[Any]] = Task(name=group_name, computation=comp)
+        return parallel_task
 
     # --- Планирование ---
     def when(self, config_fn: Union[Schedule, Callable[[Schedule], Schedule]]) -> Task[T]:

@@ -1,7 +1,12 @@
 import asyncio
 from functools import partial
 from pathlib import Path
+import sys
 from typing import List
+
+# Allow direct execution without installing package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from taskmonad import Task, TaskContext
 
 # --- Шаги задачи ---
