@@ -1,14 +1,22 @@
-"""Task and state serialization utilities."""
+from __future__ import annotations
+from typing import Any, Callable, Dict
+from taskmonad.task import Task
+from taskmonad.schedule import Schedule
 
-import json
-from typing import Any, Dict
+class ActionRegistry:
+    _registry: Dict[str, Callable[..., Task]] = {}
 
+    @classmethod
+    def register(cls, name: str):
+        def decorator(fn: Callable[..., Task]):
+            cls._registry[name] = fn
+            return fn
+        return decorator
 
-def serialize_state(state: Dict[str, Any]) -> str:
-    """Serialize task state to a JSON string."""
-    return json.dumps(state)
+    @classmethod
+    def get(cls, name: str) -> Callable[..., Task]:
+        if name not in cls._registry:
+            raise KeyError(f"Действие '{name}' не найдено в ActionRegistry.")
+        return cls._registry[name]
 
-
-def deserialize_state(payload: str) -> Dict[str, Any]:
-    """Deserialize task state from a JSON string."""
-    return json.loads(payload)
+action = ActionRegistry.register

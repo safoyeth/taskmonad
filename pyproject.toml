@@ -1,19 +1,26 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "taskmonad"
 version = "0.1.0"
-description = "A monadic task execution and scheduling framework with Qt bridge support"
+description = "A monadic task execution and pipeline framework inspired by fluxmonad"
+authors = ["Safoyeth <irbissah@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = []
+packages = [{include = "taskmonad"}]
 
-[project.optional-dependencies]
-qt = ["PyQt6>=6.0.0"]
-dev = [
-    "pytest>=7.0.0",
-    "black",
-    "mypy"
-]
+[tool.poetry.dependencies]
+python = ">=3.10"
+pydantic = ">=2.0"
+pyyaml = ">=6.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+pytest-asyncio = ">=0.20"
+playwright = ">=1.40"
+PyQt6 = ">=6.5"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
