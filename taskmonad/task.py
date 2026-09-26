@@ -153,6 +153,10 @@ class Task(Generic[T]):
             if isinstance(res, Exception):
                 return next_ctx, res
 
+            if res is None and next_ctx.get_meta("_initial_val") is not None:
+                res = next_ctx.get_meta("_initial_val")
+                next_ctx.set_meta("_initial_val", None)
+
             emit_step = next_ctx.get_meta("emit_step")
             if emit_step:
                 emit_step(target_name, "running")
@@ -351,8 +355,15 @@ class Task(Generic[T]):
         return self.always(hook)
 
     # --- Runner ---
-    async def run(self, initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]:
-        ctx = initial_ctx or TaskContext()
+    async def run(self, initial_ctx: Any = None) -> Tuple[TaskContext, Union[T, Exception]]:
+        if isinstance(initial_ctx, TaskContext):
+            ctx = initial_ctx
+        elif initial_ctx is not None:
+            ctx = TaskContext(data={"input": initial_ctx, "initial_value": initial_ctx})
+            ctx.set_meta("_initial_val", initial_ctx)
+        else:
+            ctx = TaskContext()
+
         final_ctx, result = await self._comp(ctx)
 
         try:

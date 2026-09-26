@@ -46,6 +46,12 @@ def _interpolate_value(val: Any, incoming_val: Any = None, ctx_data: Optional[Di
     if not isinstance(val, str) or ("{" not in val and "$" not in val):
         return val
 
+    # Точное совпадение с {{input}} / {input} - сохраняем исходный тип
+    stripped = val.strip()
+    if stripped in ("{{input}}", "{input}", "{{result}}", "{result}", "{{prev}}", "{prev}"):
+        if incoming_val is not None:
+            return incoming_val
+
     scope: Dict[str, Any] = {}
     if ctx_data:
         scope.update(ctx_data)
@@ -53,24 +59,62 @@ def _interpolate_value(val: Any, incoming_val: Any = None, ctx_data: Optional[Di
         scope.update(incoming_val)
         scope["result"] = incoming_val
         scope["prev"] = incoming_val
+        scope["input"] = incoming_val
     elif incoming_val is not None:
         scope["result"] = incoming_val
         scope["prev"] = incoming_val
+        scope["input"] = incoming_val
 
-    def replacer(m):
-        key = m.group(1).strip()
-        parts = key.split(".")
-        cur: Any = scope
+    def resolve_path(cur: Any, parts: list[str]) -> Any:
         for p in parts:
-            if isinstance(cur, dict) and p in cur:
-                cur = cur[p]
+            if not p:
+                continue
+            if isinstance(cur, dict):
+                if p in cur:
+                    cur = cur[p]
+                else:
+                    return "<Нет данных>"
             elif hasattr(cur, p):
                 cur = getattr(cur, p)
             else:
-                return m.group(0)
-        return str(cur)
+                return "<Нет данных>"
+        return cur
 
-    res = re.sub(r"\{([a-zA-Z0-9_\.]+)\}", replacer, val)
+    # 1. {{root}}.field (синтаксис {{input}}.title)
+    def replace_dot_outside(m: re.Match) -> str:
+        root = m.group(1).strip()
+        path = m.group(2).strip().split(".")
+        target = scope.get(root, incoming_val)
+        return str(resolve_path(target, path))
+
+    res = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}\.([a-zA-Z0-9_\.]+)", replace_dot_outside, val)
+
+    # 2. {{path}} или {path}
+    def replace_braces(m: re.Match) -> str:
+        expr = m.group(1).strip()
+        parts = expr.split(".")
+        root = parts[0]
+        rest = parts[1:]
+
+        if root in scope:
+            target = scope[root]
+            if rest:
+                return str(resolve_path(target, rest))
+            return str(target)
+        elif hasattr(incoming_val, root):
+            target = getattr(incoming_val, root)
+            return str(resolve_path(target, rest))
+        elif isinstance(incoming_val, dict) and root in incoming_val:
+            target = incoming_val[root]
+            return str(resolve_path(target, rest))
+        elif root in ("input", "result", "prev") and incoming_val is not None:
+            if rest:
+                return str(resolve_path(incoming_val, rest))
+            return str(incoming_val)
+        return "<Нет данных>"
+
+    res = re.sub(r"\{\{([a-zA-Z0-9_\.]+)\}\}", replace_braces, res)
+    res = re.sub(r"\{([a-zA-Z0-9_\.]+)\}", replace_braces, res)
     res = re.sub(r"\$([a-zA-Z0-9_]+)", lambda m: str(scope.get(m.group(1), m.group(0))), res)
     return res
 
@@ -97,10 +141,22 @@ def _build_step_callable(step_cfg: Dict[str, Any]) -> Callable[..., Any]:
         sig = inspect.signature(fn)
         call_kwargs = dict(resolved_params) if isinstance(resolved_params, dict) else {}
 
-        # Если кирпичик принимает incoming_val / result / val / data
-        for p_name in ("incoming_val", "result", "val", "data"):
+        # Автоматическая передача входящих данных пайплайна (pipeline input)
+        matched_input = False
+        for p_name in ("incoming_val", "result", "val", "data", "input"):
             if p_name in sig.parameters and p_name not in call_kwargs and incoming_val is not None:
                 call_kwargs[p_name] = incoming_val
+                matched_input = True
+
+        if not matched_input and incoming_val is not None:
+            param_names = [p.name for p in sig.parameters.values() if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) and p.name not in ("ctx", "context")]
+            if param_names and param_names[0] not in call_kwargs:
+                call_kwargs[param_names[0]] = incoming_val
+                matched_input = True
+
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if has_varkw and "input" not in call_kwargs and incoming_val is not None:
+            call_kwargs["input"] = incoming_val
 
         if "ctx" in sig.parameters and "ctx" not in call_kwargs:
             call_kwargs["ctx"] = ctx
@@ -167,12 +223,23 @@ def build_task_from_dict(data: Dict[str, Any]) -> Task[Any]:
                 fn = ActionRegistry.get(act_name)
                 params = branch_cfg.get("params", {})
                 b_name = branch_cfg.get("name", f"{act_name}(...)")
-                branch_task = fn(**params) if params else fn()
-                if isinstance(branch_task, Task):
-                    branch_task.name = b_name
-                    branch_tasks.append(branch_task)
-                else:
-                    branch_tasks.append(Task.of(branch_task, name=b_name))
+
+                def make_branch_factory(action_fn: Callable[..., Any], branch_params: Dict[str, Any], name_: str):
+                    def branch_factory(ctx: TaskContext) -> Task[Any]:
+                        async def branch_comp(c: TaskContext) -> Tuple[TaskContext, Any]:
+                            try:
+                                res = action_fn(**branch_params) if branch_params else action_fn()
+                                if inspect.iscoroutine(res):
+                                    res = await res
+                                if isinstance(res, Task):
+                                    return await res._comp(c)
+                                return c, res
+                            except Exception as e:
+                                return c, e
+                        return Task(name=name_, computation=branch_comp)
+                    return branch_factory
+
+                branch_tasks.append(make_branch_factory(fn, params, b_name))
 
             if branch_tasks:
                 parallel_node = Task.parallel(*branch_tasks, name=step_name or "ParallelGroup")
