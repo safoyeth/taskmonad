@@ -2,18 +2,23 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-try:
-    from PyQt6.QtCore import QObject, QThread, pyqtSignal
-except ImportError:
+import sys
+
+if "PyQt5" in sys.modules or "PyQt5.QtCore" in sys.modules:
+    from PyQt5.QtCore import QObject, QThread, pyqtSignal  # type: ignore[assignment,no-redef]
+else:
     try:
         from PyQt5.QtCore import QObject, QThread, pyqtSignal  # type: ignore[assignment,no-redef]
     except ImportError:
         try:
-            from PySide6.QtCore import QObject, QThread, Signal as pyqtSignal  # type: ignore[import-not-found,no-redef]
+            from PyQt6.QtCore import QObject, QThread, pyqtSignal
         except ImportError:
-            raise ImportError(
-                "Для qt_bridge требуется PyQt6, PyQt5 или PySide6. Установите: pip install PyQt6"
-            )
+            try:
+                from PySide6.QtCore import QObject, QThread, Signal as pyqtSignal  # type: ignore[import-not-found,no-redef]
+            except ImportError:
+                raise ImportError(
+                    "Для qt_bridge требуется PyQt5, PyQt6 или PySide6."
+                )
 
 from taskmonad.task import Task
 from taskmonad.context import TaskContext
