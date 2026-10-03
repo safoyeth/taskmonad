@@ -1,5 +1,7 @@
 from __future__ import annotations
+import dataclasses
 import inspect
+import json
 from pathlib import Path
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -166,6 +168,70 @@ def _build_step_callable(step_cfg: Dict[str, Any]) -> Callable[[Any], Any]:
                     first_p = next(iter(sig.parameters.values()))
                     if first_p.name not in resolved_params or resolved_params[first_p.name] in ("", None, "—"):
                         resolved_params[first_p.name] = incoming_val
+
+        # Десериализация сложных объектов (dataclasses, dict, классы)
+        for p_name, p in sig.parameters.items():
+            if p_name not in resolved_params:
+                continue
+            val = resolved_params[p_name]
+            anno = p.annotation
+            if anno is inspect.Parameter.empty or anno is None:
+                if isinstance(val, str) and val.strip().startswith("{") and val.strip().endswith("}"):
+                    try:
+                        resolved_params[p_name] = json.loads(val)
+                    except Exception:
+                        pass
+                continue
+
+            astr = str(anno).lower()
+            if dataclasses.is_dataclass(anno) or (inspect.isclass(anno) and anno not in (str, int, float, bool, list, dict, set, tuple, bytes, object, Any)):
+                dict_data = val
+                if isinstance(val, str):
+                    try:
+                        dict_data = json.loads(val)
+                    except Exception:
+                        try:
+                            dict_data = yaml.safe_load(val)
+                        except Exception:
+                            pass
+                if isinstance(dict_data, dict):
+                    try:
+                        init_sig = inspect.signature(anno.__init__)
+                        init_params = set(init_sig.parameters.keys()) - {"self", "args", "kwargs"}
+                        has_varkw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_sig.parameters.values())
+                        filtered = dict_data if has_varkw else {k: v for k, v in dict_data.items() if k in init_params}
+                        resolved_params[p_name] = anno(**filtered)
+                    except Exception:
+                        pass
+            elif "dict" in astr or "mapping" in astr:
+                if isinstance(val, str):
+                    try:
+                        resolved_params[p_name] = json.loads(val)
+                    except Exception:
+                        try:
+                            resolved_params[p_name] = yaml.safe_load(val)
+                        except Exception:
+                            pass
+            elif "list" in astr:
+                if isinstance(val, str):
+                    if val.strip().startswith("[") and val.strip().endswith("]"):
+                        try:
+                            resolved_params[p_name] = json.loads(val)
+                        except Exception:
+                            resolved_params[p_name] = [x.strip() for x in val.split(",") if x.strip()]
+                    else:
+                        resolved_params[p_name] = [x.strip() for x in val.split(",") if x.strip()]
+                elif isinstance(val, dict):
+                    resolved_params[p_name] = list(val.values())
+            elif "bool" in astr and isinstance(val, str):
+                resolved_params[p_name] = val.lower() in ("true", "1", "yes", "да", "вкл")
+            elif "int" in astr and isinstance(val, str) and (val.isdigit() or (val.startswith("-") and val[1:].isdigit())):
+                resolved_params[p_name] = int(val)
+            elif "float" in astr and isinstance(val, str):
+                try:
+                    resolved_params[p_name] = float(val)
+                except ValueError:
+                    pass
 
         # Вызов целевого действия
         if not resolved_params:
