@@ -129,6 +129,15 @@ def _build_step_callable(step_cfg: Dict[str, Any]) -> Callable[[Any], Any]:
                         cur_str = cur_str.replace(ph, str(incoming_val if incoming_val is not None else ""))
                         has_placeholder = True
 
+                # Д. Прямая подстановка полей словаря вида {field} или {{field}}
+                if isinstance(incoming_val, dict):
+                    for dk, dv in incoming_val.items():
+                        toks = (f"{{{dk}}}", f"{{{{{dk}}}}}")
+                        for tok in toks:
+                            if tok in cur_str:
+                                cur_str = cur_str.replace(tok, str(dv if dv is not None else ""))
+                                has_placeholder = True
+
                 resolved_params[k] = cur_str
 
         # 2. Если incoming_val передан, но в явном виде через плейсхолдеры не привязан
@@ -238,11 +247,30 @@ def build_task_from_dict(data: Dict[str, Any]) -> Task[Any]:
                 cond_fn = ActionRegistry.get(cond_cfg)
             else:
                 params = step_cfg.get("params", {})
-                field = params.get("field", "status")
-                op = str(params.get("operator", "=="))
-                val = str(params.get("value", "ok"))
+                cond_idx = params.get("cond_type_idx", 0)
+                step_check = str(params.get("step_check", "")).lower()
 
                 def cond_fn(x: Any) -> bool:
+                    # Режим 1: Проверка результата предыдущего шага
+                    if cond_idx == 1 or step_check:
+                        if "не пустой" in step_check or "!=" in step_check:
+                            return x is not None and x != "" and x != {} and x != []
+                        elif "пустой" in step_check or "==" in step_check:
+                            return x is None or x == "" or x == {} or x == []
+                        elif "успех" in step_check or "success" in step_check:
+                            return bool(x) and not isinstance(x, Exception)
+                        return bool(x) and not isinstance(x, Exception)
+
+                    # Режим 2: Проверка существования файла
+                    if cond_idx == 2 or "file_path" in params:
+                        from pathlib import Path
+                        fp = params.get("file_path", "")
+                        return Path(fp).exists() if fp else False
+
+                    # Режим 0: Сравнение поля объекта/словаря
+                    field = params.get("field", "status")
+                    op = str(params.get("operator", "=="))
+                    val = str(params.get("value", "ok"))
                     target = x
                     if isinstance(x, dict) and field:
                         target = x.get(field, "")

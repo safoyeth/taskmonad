@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from typing import Dict
 import asyncio
 import inspect
 from typing import (
@@ -351,8 +351,16 @@ class Task(Generic[T]):
         return self.always(hook)
 
     # --- Runner ---
-    async def run(self, initial_ctx: Optional[TaskContext] = None) -> Tuple[TaskContext, Union[T, Exception]]:
-        ctx = initial_ctx or TaskContext()
+    async def run(self, initial_ctx: Optional[Union[TaskContext, str, Dict[str, Any]]] = None) -> Tuple[TaskContext, Union[T, Exception]]:
+        if not isinstance(initial_ctx, TaskContext):
+            if isinstance(initial_ctx, dict):
+                ctx = TaskContext(data=initial_ctx)
+            elif isinstance(initial_ctx, str):
+                ctx = TaskContext(data={"user": initial_ctx, "username": initial_ctx})
+            else:
+                ctx = TaskContext()
+        else:
+            ctx = initial_ctx
         final_ctx, result = await self._comp(ctx)
 
         try:
